@@ -34,6 +34,55 @@ class Kyc(KycBase):
     class Config:
         from_attributes = True
 
+class CreditCheckBase(BaseModel):
+    applicant_id: str
+    loan_application_id: Optional[str] = None
+    credit_score: float
+    credit_report_id: Optional[str] = None
+    report_date: Optional[datetime.datetime] = None
+    bureau_source: str
+
+class CreditCheckCreate(CreditCheckBase):
+    pass
+
+class CreditCheck(CreditCheckBase):
+    credit_check_id: str
+
+    class Config:
+        from_attributes = True
+
+class EmploymentBase(BaseModel):
+    applicant_id: str
+    loan_application_id: Optional[str] = None
+    employer_name: str
+    job_title: str
+    annual_income: float
+    income_verification_document_id: Optional[str] = None
+
+class EmploymentCreate(EmploymentBase):
+    pass
+
+class Employment(EmploymentBase):
+    employment_id: str
+
+    class Config:
+        from_attributes = True
+
+class CollateralBase(BaseModel):
+    loan_application_id: str
+    type: str
+    value: float
+    document_id: Optional[str] = None
+
+class CollateralCreate(CollateralBase):
+    pass
+
+class Collateral(CollateralBase):
+    collateral_id: str
+
+    class Config:
+        from_attributes = True
+
 class AuditTrailBase(BaseModel):
     action: str
     user_id: str
@@ -62,6 +111,9 @@ class LoanApplicationBase(BaseModel):
 
 class LoanApplicationCreate(LoanApplicationBase):
     kyc: KycCreate
+    credit_checks: Optional[List[CreditCheckCreate]] = None
+    employments: Optional[List[EmploymentCreate]] = None
+    collaterals: Optional[List[CollateralCreate]] = None
 
 class LoanApplication(LoanApplicationBase):
     application_id: str
@@ -70,6 +122,9 @@ class LoanApplication(LoanApplicationBase):
     kyc: Optional[Kyc] = None
     documents: List[Document] = []
     audit_trails: List[AuditTrail] = []
+    credit_checks: List[CreditCheck] = []
+    employments: List[Employment] = []
+    collaterals: List[Collateral] = []
 
     class Config:
         from_attributes = True
