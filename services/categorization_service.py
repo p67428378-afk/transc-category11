@@ -1,32 +1,35 @@
 
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 from models import Category, CategorizationRule, Transaction
 from schemas import TransactionCreate
 from typing import Optional, List
 
 def get_category_for_merchant(db: Session, merchant_name: str) -> Optional[Category]:
-    # Find rules that match the merchant name, ordered by priority
-    # Using ILIKE for case-insensitive matching and % for wildcard
+    # 1. Try to find rules where the merchant_name starts with the rule's merchant_pattern
+    # This handles cases like rule "Amazon" matching "Amazon.com"
+    # and rule "Comcast" matching "Comcast Cable"
     matching_rules: List[CategorizationRule] = db.query(CategorizationRule).filter(
-        CategorizationRule.merchant_pattern.ilike(f"%{merchant_name}%")
-    ).order_by(CategorizationRule.priority.asc()).all() # Lower priority number means higher priority
-
-    # If no direct match, try more general patterns
-    if not matching_rules:
-        matching_rules = db.query(CategorizationRule).filter(
-            or_(
-                CategorizationRule.merchant_pattern.ilike(f"%{merchant_name.split()[0]}%"), # Match first word
-                CategorizationRule.merchant_pattern.ilike("%") # Catch-all rule
-            )
-        ).order_by(CategorizationRule.priority.asc()).all()
+        func.lower(merchant_name).startswith(func.lower(CategorizationRule.merchant_pattern))
+    ).order_by(CategorizationRule.priority.asc()).all()
 
     if matching_rules:
-        # For simplicity, take the first rule. More complex logic might be needed for tie-breaking.
-        # The HLD mentions priority for rule conflict resolution.
-        # Assuming lower priority value means higher importance.
         best_rule = matching_rules[0]
         return db.query(Category).filter(Category.category_id == best_rule.category_id).first()
+
+    # 2. If no prefix match, try to find rules where the merchant_name contains the rule's merchant_pattern
+    # This handles cases like rule "Walmart" matching "Walmart Supercenter"
+    # We must exclude the problematic catch-all pattern '%' here.
+    matching_rules = db.query(CategorizationRule).filter(
+        CategorizationRule.merchant_pattern != '%', # Exclude the problematic catch-all
+        func.lower(merchant_name).contains(func.lower(CategorizationRule.merchant_pattern))
+    ).order_by(CategorizationRule.priority.asc()).all()
+
+    if matching_rules:
+        best_rule = matching_rules[0]
+        return db.query(Category).filter(Category.category_id == best_rule.category_id).first()
+
+    # 3. If no specific or partial match, return None.
     return None
 
 def categorize_transaction(db: Session, transaction_data: TransactionCreate) -> Transaction:

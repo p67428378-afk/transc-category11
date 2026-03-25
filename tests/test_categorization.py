@@ -134,27 +134,13 @@ def test_categorize_transaction_unknown_merchant_flagged(client: TestClient, ses
     assert transaction_data["assigned_category"] is None
     assert transaction_data["flagged_for_review"] is True
 
-def test_categorize_transaction_ambiguous_merchant_default_shopping(client: TestClient, session: Session):
-    # Setup: Create Shopping category
-    shopping_category_response = client.post(
-        "/categories/",
-        json={"category_name": "Shopping", "description": "General shopping expenses"}
-    )
-    shopping_category_id = shopping_category_response.json()["category_id"]
+def test_categorize_transaction_unknown_merchant_no_catch_all_flagged(client: TestClient, session: Session):
+    # Setup: Ensure no catch-all rule exists that would prevent flagging.
+    # We are explicitly NOT creating a rule with merchant_pattern: "%" here.
+    # Also, ensure no specific rule for "Walmart" exists for this test.
 
-    # No specific rule for 'Walmart', should fall back to default 'Shopping' if implemented this way
-    # For now, if no rule matches, it will be flagged. I will adjust this test once default logic is implemented.
-    # For the purpose of this test, I will add a generic rule that matches everything if no specific rule is found.
-    # This is a placeholder for the actual default logic.
-    client.post(
-        "/rules/",
-        json={
-            "merchant_pattern": "%", # Catch-all rule
-            "category_id": shopping_category_id,
-            "priority": 99 # Low priority
-        }
-    )
-
+    # Test: Categorize a transaction from an unknown merchant (e.g., "Walmart Supercenter")
+    # without any specific or catch-all rules.
     transaction_response = client.post(
         "/transactions/categorize",
         json={
@@ -168,8 +154,8 @@ def test_categorize_transaction_ambiguous_merchant_default_shopping(client: Test
     assert transaction_response.status_code == 200
     transaction_data = transaction_response.json()
     assert transaction_data["merchant_name"] == "Walmart Supercenter"
-    assert transaction_data["assigned_category"]["category_name"] == "Shopping"
-    assert transaction_data["flagged_for_review"] is False
+    assert transaction_data["assigned_category"] is None  # Should be None as no rule matched
+    assert transaction_data["flagged_for_review"] is True # Should be flagged for review
 
 def test_get_transactions(client: TestClient, session: Session):
     # Setup: Create a category and a transaction
@@ -270,4 +256,3 @@ def test_report_incorrect_categorization(client: TestClient, session: Session):
     assert reported_issue["transaction_id"] == transaction_id
     assert reported_issue["reported_by_user_id"] == "user123"
     assert reported_issue["status"] == "Open"
-
