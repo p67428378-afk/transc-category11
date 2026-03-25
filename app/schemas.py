@@ -73,3 +73,23 @@ class LoanApplication(LoanApplicationBase):
 
     class Config:
         from_attributes = True
+
+class RiskAssessmentRequest(BaseModel):
+    application_id: str
+
+class RiskAssessmentResponse(BaseModel):
+    application_id: str
+    risk_score: float
+    compliance_status: str
+    status: str
+
+class DocumentGenerationRequest(BaseModel):
+    application_id: str
+    document_type: str
+    template_id: str
+
+class DocumentGenerationResponse(BaseModel):
+    loan_application_id: str
+    document_id: str
+    type: str
+    storage_path: str

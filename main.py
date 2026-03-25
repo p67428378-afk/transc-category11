@@ -4,7 +4,8 @@ from app.database import Base, engine
 
 app = FastAPI()
 
-# Create database tables
-Base.metadata.create_all(bind=engine)
+@app.on_event("startup")
+async def startup_event():
+    Base.metadata.create_all(bind=engine)
 
 app.include_router(loan_application.router)
