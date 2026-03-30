@@ -17,15 +17,15 @@ class PreseededMappingResponse(PreseededMappingBase):
         from_attributes = True
 
 class CustomMappingBase(BaseModel):
-    merchant_keyword: str
-    category: str
+    merchant_keyword: str = Field(..., min_length=1, max_length=255)
+    category: str = Field(..., min_length=1, max_length=255)
 
 class CustomMappingCreate(CustomMappingBase):
     pass
 
 class CustomMappingUpdate(BaseModel):
-    merchant_keyword: Optional[str] = None
-    category: Optional[str] = None
+    merchant_keyword: Optional[str] = Field(None, min_length=1, max_length=255)
+    category: Optional[str] = Field(None, min_length=1, max_length=255)
 
 class CustomMappingResponse(CustomMappingBase):
     custom_mapping_id: str
