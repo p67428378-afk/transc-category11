@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+SQLAlchemy
+pydantic
+psycopg2-binary # For PostgreSQL, can be swapped for other DBs
+python-dotenv
+pytest
+httpx
