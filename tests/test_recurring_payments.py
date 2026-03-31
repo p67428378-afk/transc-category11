@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
-from app.models.models import RecurringPayment, User, Frequency, RecurringPaymentStatus
+from app.models.models import RecurringPayment, User, Frequency, RecurringPaymentStatus, Transaction, Notification, TransactionStatus, NotificationType
 from app.schemas.schemas import RecurringPaymentCreate, RecurringPaymentUpdate
 from datetime import datetime, timedelta
 
@@ -24,7 +24,7 @@ def test_create_recurring_payment(client: TestClient, session: Session):
 
     response = client.post("/api/v1/recurring-payments/", json=recurring_payment_data)
 
-    assert response.status_code == 201  # Changed from 200 to 201
+    assert response.status_code == 201
     data = response.json()
     assert data["biller_name"] == "Internet Provider"
     assert data["amount"] == 50.0
@@ -251,3 +251,96 @@ def test_unauthorized_access_to_payment(client: TestClient, session: Session):
 
     # Clean up override
     client.app.dependency_overrides.pop(get_current_user)
+
+def test_process_due_recurring_payments_success(client: TestClient, session: Session):
+    # Create a user (user_id=1 for successful balance check simulation)
+    user = User(id=1, email="user_success@example.com", account_id="ACC_SUCCESS")
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+
+    # Create a recurring payment due today
+    due_date = datetime.now() - timedelta(days=1) # Set to yesterday to ensure it's due
+    recurring_payment_create = RecurringPaymentCreate(
+        user_id=user.id,
+        biller_name="Successful Biller",
+        amount=75.0,
+        currency="USD",
+        start_date=due_date,
+        frequency=Frequency.MONTHLY
+    )
+    db_payment = RecurringPayment(
+        **recurring_payment_create.model_dump(),
+        next_payment_date=due_date, # Set to due date
+        status=RecurringPaymentStatus.ACTIVE
+    )
+    session.add(db_payment)
+    session.commit()
+    session.refresh(db_payment)
+
+    # Process due payments
+    response = client.post("/api/v1/recurring-payments/process-due")
+    assert response.status_code == 200
+    assert "Processed 1 recurring payments." in response.json()["message"]
+
+    # Verify transaction was logged
+    transaction = session.query(Transaction).filter(Transaction.recurring_payment_id == db_payment.id).first()
+    assert transaction is not None
+    assert transaction.status == TransactionStatus.SUCCESS
+    assert transaction.tag == "AUTOPAY"
+    assert transaction.amount == 75.0
+
+    # Verify notification was sent
+    notification = session.query(Notification).filter(Notification.related_transaction_id == transaction.id).first()
+    assert notification is not None
+    assert notification.type == NotificationType.PAYMENT_SUCCESS
+
+    # Verify next_payment_date was updated
+    session.refresh(db_payment)
+    assert db_payment.next_payment_date.date() > due_date.date()
+
+def test_process_due_recurring_payments_insufficient_funds(client: TestClient, session: Session):
+    # Create a user (user_id=2 for insufficient balance check simulation)
+    user = User(id=2, email="user_fail@example.com", account_id="ACC_FAIL")
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+
+    # Create a recurring payment due today
+    due_date = datetime.now() - timedelta(days=1) # Set to yesterday to ensure it's due
+    recurring_payment_create = RecurringPaymentCreate(
+        user_id=user.id,
+        biller_name="Failed Biller",
+        amount=150.0,
+        currency="USD",
+        start_date=due_date,
+        frequency=Frequency.WEEKLY
+    )
+    db_payment = RecurringPayment(
+        **recurring_payment_create.model_dump(),
+        next_payment_date=due_date, # Set to due date
+        status=RecurringPaymentStatus.ACTIVE
+    )
+    session.add(db_payment)
+    session.commit()
+    session.refresh(db_payment)
+
+    # Process due payments
+    response = client.post("/api/v1/recurring-payments/process-due")
+    assert response.status_code == 200
+    assert "Processed 1 recurring payments." in response.json()["message"]
+
+    # Verify transaction was logged as failed
+    transaction = session.query(Transaction).filter(Transaction.recurring_payment_id == db_payment.id).first()
+    assert transaction is not None
+    assert transaction.status == TransactionStatus.FAILED
+    assert transaction.amount == 150.0
+
+    # Verify notification was sent
+    notification = session.query(Notification).filter(Notification.related_transaction_id == transaction.id).first()
+    assert notification is not None
+    assert notification.type == NotificationType.PAYMENT_FAILED
+
+    # Verify next_payment_date was updated
+    session.refresh(db_payment)
+    assert db_payment.next_payment_date.date() > due_date.date()

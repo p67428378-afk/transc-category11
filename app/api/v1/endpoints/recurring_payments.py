@@ -7,6 +7,7 @@ from app.db.database import get_db
 from app.schemas import schemas
 from app.crud import crud_recurring_payment
 from app.models.models import User # Assuming a way to get the current user
+from app.services.payment_processor import process_recurring_payments
 
 router = APIRouter()
 
@@ -95,3 +96,10 @@ def delete_recurring_payment(
         raise HTTPException(status_code=403, detail="Not authorized to delete this recurring payment")
     crud_recurring_payment.delete_recurring_payment(db=db, payment_id=payment_id)
     return {"message": "Recurring Payment deleted successfully"}
+
+@router.post("/recurring-payments/process-due", status_code=status.HTTP_200_OK)
+def process_due_recurring_payments(
+    db: Session = Depends(get_db)
+):
+    """Manually trigger processing of all recurring payments due today."""
+    return process_recurring_payments(db)

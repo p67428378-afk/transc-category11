@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
-from datetime import datetime, timedelta
-from typing import Optional
+from datetime import datetime, timedelta, date
+from typing import Optional, List
 
 from app.models.models import RecurringPayment, User, Frequency, RecurringPaymentStatus
 from app.schemas.schemas import RecurringPaymentCreate, RecurringPaymentUpdate
@@ -34,8 +34,15 @@ def create_recurring_payment(db: Session, payment: RecurringPaymentCreate) -> Re
 def get_recurring_payment(db: Session, payment_id: int) -> Optional[RecurringPayment]:
     return db.query(RecurringPayment).filter(RecurringPayment.id == payment_id).first()
 
-def get_recurring_payments_by_user(db: Session, user_id: int, skip: int = 0, limit: int = 100) -> list[RecurringPayment]:
+def get_recurring_payments_by_user(db: Session, user_id: int, skip: int = 0, limit: int = 100) -> List[RecurringPayment]:
     return db.query(RecurringPayment).filter(RecurringPayment.user_id == user_id).offset(skip).limit(limit).all()
+
+def get_due_recurring_payments(db: Session, current_date: date) -> List[RecurringPayment]:
+    """Retrieves active recurring payments that are due on or before the current date."""
+    return db.query(RecurringPayment).filter(
+        RecurringPayment.status == RecurringPaymentStatus.ACTIVE,
+        RecurringPayment.next_payment_date <= current_date
+    ).all()
 
 def update_recurring_payment(db: Session, payment_id: int, payment_update: RecurringPaymentUpdate) -> Optional[RecurringPayment]:
     db_payment = db.query(RecurringPayment).filter(RecurringPayment.id == payment_id).first()
@@ -51,6 +58,14 @@ def update_recurring_payment(db: Session, payment_id: int, payment_update: Recur
         db.commit()
         db.refresh(db_payment)
     return db_payment
+
+def update_recurring_payment_next_date(db: Session, payment: RecurringPayment) -> RecurringPayment:
+    """Updates the next_payment_date for a recurring payment after processing."""
+    payment.next_payment_date = calculate_next_payment_date(payment.next_payment_date, payment.frequency)
+    db.add(payment)
+    db.commit()
+    db.refresh(payment)
+    return payment
 
 def delete_recurring_payment(db: Session, payment_id: int) -> Optional[RecurringPayment]:
     db_payment = db.query(RecurringPayment).filter(RecurringPayment.id == payment_id).first()
