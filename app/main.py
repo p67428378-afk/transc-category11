@@ -5,8 +5,6 @@ from app.api.v1.endpoints import recurring_payments
 # Import models to ensure they are registered with SQLAlchemy Base
 from app.models import models
 
-Base.metadata.create_all(bind=engine)
-
 app = FastAPI(
     title="Recurring Payments API",
     description="API for managing recurring payments, balance checks, and notifications.",
