@@ -45,6 +45,9 @@ class TransactionBase(BaseModel):
 class TransactionCreate(TransactionBase):
     user_id: str
 
+class TransactionUpdate(BaseModel):
+    assigned_category: str = Field(..., min_length=1, max_length=255)
+
 class TransactionResponse(TransactionBase):
     transaction_id: str
     user_id: str

@@ -74,9 +74,9 @@ class CategorizationService:
         return TransactionResponse.model_validate(db_transaction)
 
     def _update_budget_totals(self, user_id: str, category: str, amount: int):
-        # Placeholder for updating budget totals in the Budget Tracking Module
         # In a real scenario, this would involve an API call to the Budget Tracking Module
         # For now, we'll simulate an update to our local BudgetCategory model
+        print(f"Simulating API call to Budget Tracking Module: User {user_id}, Category {category}, Amount {amount}")
         current_month = datetime.now().month
         current_year = datetime.now().year
 
@@ -102,3 +102,33 @@ class CategorizationService:
         self.db.commit()
         self.db.refresh(budget_category)
 
+    def update_transaction_category(self, transaction_id: str, user_id: str, new_category: str) -> Optional[Transaction]:
+        db_transaction = self.db.query(Transaction).filter(
+            Transaction.transaction_id == transaction_id,
+            Transaction.user_id == user_id
+        ).first()
+
+        if not db_transaction:
+            return None
+
+        old_category = db_transaction.assigned_category
+        old_amount = db_transaction.amount
+
+        # Deduct from old category budget
+        if old_category != "Uncategorized":
+            print(f"Simulating API call to Budget Tracking Module: Deducting {old_amount} from {old_category} for User {user_id}")
+            self._update_budget_totals(user_id, old_category, -old_amount)
+
+        # Add to new category budget
+        print(f"Simulating API call to Budget Tracking Module: Adding {old_amount} to {new_category} for User {user_id}")
+        self._update_budget_totals(user_id, new_category, old_amount)
+
+        db_transaction.assigned_category = new_category
+        db_transaction.categorization_timestamp = datetime.now()
+        db_transaction.categorization_rule_id = None # Manual categorization, no rule ID
+
+        self.db.add(db_transaction)
+        self.db.commit()
+        self.db.refresh(db_transaction)
+
+        return db_transaction
