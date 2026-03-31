@@ -8,7 +8,7 @@ from database import Base
 from database import get_db
 from main import app
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="function", autouse=True)
 def setup_db():
     db_url = os.getenv("DATABASE_URL", "sqlite:///:memory:")
     engine = create_engine(db_url, connect_args={"check_same_thread": False} if "sqlite" in db_url else {},
@@ -17,6 +17,8 @@ def setup_db():
     models_path = "app/models"
     if os.path.isdir(models_path):
         for root, dirs, files in os.walk(models_path):
+            dirs[:] = sorted(dirs)
+            files = sorted(files)
             for file in files:
                 if file.endswith(".py") and file != "__init__.py":
                     rel = os.path.relpath(os.path.join(root, file), ".").replace(os.sep, ".").removesuffix(".py")
@@ -31,7 +33,7 @@ def setup_db():
 @pytest.fixture
 def session(setup_db):
     engine = setup_db
-    TestSession = sessionmaker(bind=engine)
+    TestSession = sessionmaker(bind=engine, expire_on_commit=False)
     s = TestSession()
     yield s
     s.close()
@@ -42,4 +44,14 @@ def override_db(session):
         yield session
     app.dependency_overrides[get_db] = _get_db_override
     yield
+    app.dependency_overrides.clear()
+
+@pytest.fixture
+def client(session):
+    def _get_db_override():
+        yield session
+    app.dependency_overrides[get_db] = _get_db_override
+    from fastapi.testclient import TestClient
+    with TestClient(app) as c:
+        yield c
     app.dependency_overrides.clear()

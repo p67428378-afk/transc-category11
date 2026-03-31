@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from typing import List
 
 from database import get_db
-from schemas import LoanApplicationCreate, LoanApplicationResponse, LoanApplicationUpdateStatus
+from schemas import LoanApplicationCreate, LoanApplicationResponse, LoanApplicationUpdateStatus, AuditLogResponse
 from services.loan_application_service import loan_application_service
 
 router = APIRouter()
@@ -36,3 +36,15 @@ def update_loan_application_status(
     if db_application is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Loan application not found")
     return db_application
+
+@router.get("/loan-applications/{application_id}/audit-logs", response_model=List[AuditLogResponse], status_code=status.HTTP_200_OK)
+def get_loan_application_audit_logs(
+    application_id: int,
+    db: Session = Depends(get_db)
+):
+    # First, check if the loan application exists
+    db_application = loan_application_service.get_loan_application(db, application_id)
+    if db_application is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Loan application not found")
+
+    return loan_application_service.get_audit_logs_for_application(db, application_id)

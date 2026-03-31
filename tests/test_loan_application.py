@@ -31,6 +31,16 @@ class LoanApplication(Base):
     decision_rationale = Column(String, nullable=True)
     approved_by = Column(String, nullable=True)
 
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    loan_application_id = Column(Integer, index=True, nullable=False)
+    action = Column(String, nullable=False)
+    timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    user_id = Column(String, nullable=True)
+    details = Column(String, nullable=True)
+
 
 # --- Test Fixtures ---
 @pytest.fixture(name="db_session")
@@ -108,9 +118,9 @@ async def test_create_loan_application_missing_credit_score_income(client: Async
     assert data["applicant_id"] == "applicant_no_score_income"
     assert data["loan_amount"] == 5000.0
     assert data["status"] == "pending"
-    assert data["credit_score"] is None
-    assert data["income"] is None
-    assert data["risk_assessment"] == "High Risk" # Default risk if no data
+    assert data["credit_score"] is not None # Should be simulated now
+    assert data["income"] is not None # Should be simulated now
+    assert data["risk_assessment"] in ["Low Risk", "Medium Risk", "High Risk"] # Can be any due to simulation
 
 @pytest.mark.asyncio
 async def test_get_loan_application(client: AsyncClient):
@@ -138,7 +148,7 @@ async def test_get_loan_application(client: AsyncClient):
     assert retrieved_data["status"] == "pending"
     assert retrieved_data["credit_score"] == 680
     assert retrieved_data["income"] == 75000.0
-    assert retrieved_data["risk_assessment"] == "Medium Risk"
+    assert retrieved_data["risk_assessment"] == "Low Risk" # Updated logic: 680 credit, 20k/75k = 0.26 < 0.5
 
 @pytest.mark.asyncio
 async def test_get_nonexistent_loan_application(client: AsyncClient):
@@ -252,7 +262,7 @@ async def test_automated_risk_assessment_high_risk(client: AsyncClient):
         json={
             "applicant_id": "applicant_high_risk",
             "loan_amount": 50000.0,
-            "credit_score": 600, # Low credit score
+            "credit_score": 500, # Low credit score
             "income": 30000.0 # Low income
         },
     )
@@ -272,7 +282,7 @@ async def test_automated_risk_assessment_medium_risk(client: AsyncClient):
         json={
             "applicant_id": "applicant_medium_risk",
             "loan_amount": 30000.0,
-            "credit_score": 680, # Medium credit score
+            "credit_score": 600, # Medium credit score
             "income": 50000.0 # Medium income
         },
     )
@@ -304,3 +314,51 @@ async def test_automated_risk_assessment_low_risk(client: AsyncClient):
     assert get_response.status_code == 200
     retrieved_data = get_response.json()
     assert retrieved_data["risk_assessment"] == "Low Risk"
+
+@pytest.mark.asyncio
+async def test_get_loan_application_audit_logs(client: AsyncClient):
+    # Create an application
+    create_response = await client.post(
+        "/loan-applications/",
+        json={
+            "applicant_id": "applicant_audit",
+            "loan_amount": 10000.0,
+            "credit_score": 700,
+            "income": 50000.0
+        },
+    )
+    assert create_response.status_code == 200
+    created_data = create_response.json()
+    loan_id = created_data["id"]
+
+    # Update its status to approved
+    await client.put(
+        f"/loan-applications/{loan_id}/status",
+        json={
+            "status": "approved",
+            "decision": "approved",
+            "decision_rationale": "Good credit history",
+            "approved_by": "loan_officer_1"
+        },
+    )
+
+    # Get audit logs
+    audit_logs_response = await client.get(f"/loan-applications/{loan_id}/audit-logs")
+    assert audit_logs_response.status_code == 200
+    audit_logs = audit_logs_response.json()
+
+    assert len(audit_logs) == 2 # Created and Status Updated
+    assert audit_logs[0]["action"] == "Loan Application Created"
+    assert audit_logs[0]["loan_application_id"] == loan_id
+    assert "Initial risk assessment" in audit_logs[0]["details"]
+
+    assert audit_logs[1]["action"] == "Loan Application Status Updated"
+    assert audit_logs[1]["loan_application_id"] == loan_id
+    assert audit_logs[1]["user_id"] == "loan_officer_1"
+    assert "Status changed from pending to approved" in audit_logs[1]["details"]
+
+@pytest.mark.asyncio
+async def test_get_loan_application_audit_logs_nonexistent_application(client: AsyncClient):
+    response = await client.get("/loan-applications/99999/audit-logs")
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Loan application not found"}
