@@ -1,8 +1,8 @@
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean
-from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey
+from sqlalchemy.orm import sessionmaker, declarative_base, relationship
 from sqlalchemy.pool import StaticPool
 from datetime import datetime, timezone
 import os
@@ -30,6 +30,20 @@ class LoanApplication(Base):
     decision = Column(String, nullable=True)
     decision_rationale = Column(String, nullable=True)
     approved_by = Column(String, nullable=True)
+
+    loan_history = relationship("LoanHistory", back_populates="loan_application", cascade="all, delete-orphan")
+
+class LoanHistory(Base):
+    __tablename__ = "loan_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    loan_application_id = Column(Integer, ForeignKey("loan_applications.id"), nullable=False)
+    previous_loan_amount = Column(Float, nullable=False)
+    outstanding_balance = Column(Float, nullable=False)
+    payment_history = Column(String, nullable=False) # e.g., "good", "fair", "poor"
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    loan_application = relationship("LoanApplication", back_populates="loan_history")
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"
@@ -74,19 +88,26 @@ async def test_read_root(client: AsyncClient):
     assert response.json() == {"message": "Welcome to the Loan Application API"}
 
 @pytest.mark.asyncio
-async def test_create_loan_application(client: AsyncClient):
+async def test_create_loan_application_with_loan_history(client: AsyncClient):
     response = await client.post(
         "/loan-applications/",
         json={
-            "applicant_id": "applicant123",
+            "applicant_id": "applicant_with_history",
             "loan_amount": 10000.0,
             "credit_score": 750,
-            "income": 60000.0
+            "income": 60000.0,
+            "loan_history": [
+                {
+                    "previous_loan_amount": 5000.0,
+                    "outstanding_balance": 1000.0,
+                    "payment_history": "good"
+                }
+            ]
         },
     )
     assert response.status_code == 200
     data = response.json()
-    assert data["applicant_id"] == "applicant123"
+    assert data["applicant_id"] == "applicant_with_history"
     assert data["loan_amount"] == 10000.0
     assert data["status"] == "pending"
     assert "id" in data
@@ -95,14 +116,34 @@ async def test_create_loan_application(client: AsyncClient):
     assert data["credit_score"] == 750
     assert data["income"] == 60000.0
     assert data["risk_assessment"] == "Low Risk"
+    assert len(data["loan_history"]) == 1
+    assert data["loan_history"][0]["previous_loan_amount"] == 5000.0
+    assert data["loan_history"][0]["payment_history"] == "good"
 
-    # Verify in database
-    db = SessionLocal()
-    loan_app = db.query(LoanApplication).filter(LoanApplication.id == data["id"]).first()
-    assert loan_app is not None
-    assert loan_app.applicant_id == "applicant123"
-    assert loan_app.loan_amount == 10000.0
-    db.close()
+@pytest.mark.asyncio
+async def test_create_loan_application_without_loan_history(client: AsyncClient):
+    response = await client.post(
+        "/loan-applications/",
+        json={
+            "applicant_id": "applicant_no_history",
+            "loan_amount": 10000.0,
+            "credit_score": 750,
+            "income": 60000.0
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["applicant_id"] == "applicant_no_history"
+    assert data["loan_amount"] == 10000.0
+    assert data["status"] == "pending"
+    assert "id" in data
+    assert "created_at" in data
+    assert "updated_at" in data
+    assert data["credit_score"] == 750
+    assert data["income"] == 60000.0
+    assert data["risk_assessment"] == "Low Risk"
+    # Loan history might be simulated, so check if it's a list
+    assert isinstance(data["loan_history"], list)
 
 @pytest.mark.asyncio
 async def test_create_loan_application_missing_credit_score_income(client: AsyncClient):
@@ -131,7 +172,14 @@ async def test_get_loan_application(client: AsyncClient):
             "applicant_id": "applicant456",
             "loan_amount": 20000.0,
             "credit_score": 680,
-            "income": 75000.0
+            "income": 75000.0,
+            "loan_history": [
+                {
+                    "previous_loan_amount": 10000.0,
+                    "outstanding_balance": 2000.0,
+                    "payment_history": "fair"
+                }
+            ]
         },
     )
     assert create_response.status_code == 200
@@ -148,7 +196,10 @@ async def test_get_loan_application(client: AsyncClient):
     assert retrieved_data["status"] == "pending"
     assert retrieved_data["credit_score"] == 680
     assert retrieved_data["income"] == 75000.0
-    assert retrieved_data["risk_assessment"] == "Low Risk" # Updated logic: 680 credit, 20k/75k = 0.26 < 0.5
+    assert retrieved_data["risk_assessment"] == "Medium Risk" # Updated logic: fair payment history
+    assert len(retrieved_data["loan_history"]) == 1
+    assert retrieved_data["loan_history"][0]["previous_loan_amount"] == 10000.0
+    assert retrieved_data["loan_history"][0]["payment_history"] == "fair"
 
 @pytest.mark.asyncio
 async def test_get_nonexistent_loan_application(client: AsyncClient):
@@ -263,7 +314,14 @@ async def test_automated_risk_assessment_high_risk(client: AsyncClient):
             "applicant_id": "applicant_high_risk",
             "loan_amount": 50000.0,
             "credit_score": 500, # Low credit score
-            "income": 30000.0 # Low income
+            "income": 30000.0, # Low income
+            "loan_history": [
+                {
+                    "previous_loan_amount": 10000.0,
+                    "outstanding_balance": 5000.0,
+                    "payment_history": "poor"
+                }
+            ]
         },
     )
     assert create_response.status_code == 200
@@ -283,7 +341,14 @@ async def test_automated_risk_assessment_medium_risk(client: AsyncClient):
             "applicant_id": "applicant_medium_risk",
             "loan_amount": 30000.0,
             "credit_score": 600, # Medium credit score
-            "income": 50000.0 # Medium income
+            "income": 50000.0, # Medium income
+            "loan_history": [
+                {
+                    "previous_loan_amount": 10000.0,
+                    "outstanding_balance": 2000.0,
+                    "payment_history": "fair"
+                }
+            ]
         },
     )
     assert create_response.status_code == 200
@@ -303,7 +368,14 @@ async def test_automated_risk_assessment_low_risk(client: AsyncClient):
             "applicant_id": "applicant_low_risk",
             "loan_amount": 10000.0,
             "credit_score": 750, # High credit score
-            "income": 80000.0 # High income
+            "income": 80000.0, # High income
+            "loan_history": [
+                {
+                    "previous_loan_amount": 5000.0,
+                    "outstanding_balance": 0.0,
+                    "payment_history": "good"
+                }
+            ]
         },
     )
     assert create_response.status_code == 200

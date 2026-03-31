@@ -1,7 +1,7 @@
 
-from sqlalchemy.orm import Session
-from models import LoanApplication, AuditLog
-from schemas import LoanApplicationCreate, LoanApplicationUpdateStatus
+from sqlalchemy.orm import Session, joinedload
+from models import LoanApplication, AuditLog, LoanHistory
+from schemas import LoanApplicationCreate, LoanApplicationUpdateStatus, LoanHistoryCreate
 from datetime import datetime, timezone
 import random
 
@@ -22,7 +22,20 @@ class LoanApplicationService:
         simulated_credit_score = application.credit_score if application.credit_score is not None else random.randint(300, 850)
         simulated_income = application.income if application.income is not None else round(random.uniform(20000, 150000), 2)
 
-        risk_assessment = self._perform_risk_assessment(simulated_credit_score, simulated_income, application.loan_amount)
+        # Simulate external loan history retrieval if not provided
+        simulated_loan_history_data = []
+        if application.loan_history:
+            simulated_loan_history_data = application.loan_history
+        elif random.random() > 0.5: # 50% chance of having previous loans if not provided
+            simulated_loan_history_data = [
+                LoanHistoryCreate(
+                    previous_loan_amount=round(random.uniform(1000, 20000), 2),
+                    outstanding_balance=round(random.uniform(0, 5000), 2),
+                    payment_history=random.choice(["good", "fair", "poor"])
+                )
+            ]
+
+        risk_assessment = self._perform_risk_assessment(simulated_credit_score, simulated_income, application.loan_amount, simulated_loan_history_data)
 
         db_application = LoanApplication(
             applicant_id=application.applicant_id,
@@ -32,15 +45,30 @@ class LoanApplicationService:
             risk_assessment=risk_assessment
         )
         db.add(db_application)
+        db.flush() # Flush to get db_application.id before committing
+
+        if simulated_loan_history_data:
+            for lh_data in simulated_loan_history_data:
+                db_loan_history = LoanHistory(
+                    loan_application_id=db_application.id,
+                    previous_loan_amount=lh_data.previous_loan_amount,
+                    outstanding_balance=lh_data.outstanding_balance,
+                    payment_history=lh_data.payment_history
+                )
+                db.add(db_loan_history)
+
         db.commit()
         db.refresh(db_application)
+
+        # Eagerly load loan_history for the response
+        db_application = db.query(LoanApplication).options(joinedload(LoanApplication.loan_history)).filter(LoanApplication.id == db_application.id).first()
 
         self._create_audit_log(db, db_application.id, "Loan Application Created", details=f"Initial risk assessment: {risk_assessment}")
 
         return db_application
 
     def get_loan_application(self, db: Session, application_id: int) -> LoanApplication:
-        return db.query(LoanApplication).filter(LoanApplication.id == application_id).first()
+        return db.query(LoanApplication).options(joinedload(LoanApplication.loan_history)).filter(LoanApplication.id == application_id).first()
 
     def get_audit_logs_for_application(self, db: Session, loan_application_id: int) -> list[AuditLog]:
         return db.query(AuditLog).filter(AuditLog.loan_application_id == loan_application_id).order_by(AuditLog.timestamp.asc()).all()
@@ -62,23 +90,47 @@ class LoanApplicationService:
 
         return db_application
 
-    def _perform_risk_assessment(self, credit_score: int, income: float, loan_amount: float) -> str:
+    def _perform_risk_assessment(self, credit_score: int, income: float, loan_amount: float, loan_history: list[LoanHistoryCreate] = None) -> str:
         # Enhanced placeholder for actual risk assessment logic
         # This can be expanded to integrate with external services or more complex rules
 
-        # Rule 1: Very low credit score or extremely high debt-to-income ratio
-        if credit_score < 550 or (income > 0 and (loan_amount / income) > 0.8): # Loan amount is 80% of annual income
+        risk_factors = []
+
+        # Credit Score based assessment
+        if credit_score < 550:
+            risk_factors.append("low_credit_score")
+        elif 550 <= credit_score < 680:
+            risk_factors.append("medium_credit_score")
+        else:
+            risk_factors.append("high_credit_score")
+
+        # Debt-to-income ratio assessment
+        if income > 0:
+            dti_ratio = loan_amount / income
+            if dti_ratio > 0.8:
+                risk_factors.append("high_dti")
+            elif dti_ratio > 0.5:
+                risk_factors.append("medium_dti")
+            else:
+                risk_factors.append("low_dti")
+        else:
+            risk_factors.append("no_income_data")
+
+        # Loan History assessment
+        if loan_history:
+            for lh in loan_history:
+                # Access attributes using dot notation for Pydantic models
+                if lh.payment_history == "poor":
+                    risk_factors.append("poor_payment_history")
+                elif lh.payment_history == "fair":
+                    risk_factors.append("fair_payment_history")
+
+        # Determine overall risk based on collected factors
+        if "low_credit_score" in risk_factors or "high_dti" in risk_factors or "poor_payment_history" in risk_factors:
             return "High Risk"
-
-        # Rule 2: Moderate credit score or high debt-to-income ratio
-        if 550 <= credit_score < 680 or (income > 0 and (loan_amount / income) > 0.5): # Loan amount is 50% of annual income
+        elif "medium_credit_score" in risk_factors or "medium_dti" in risk_factors or "fair_payment_history" in risk_factors or "no_income_data" in risk_factors:
             return "Medium Risk"
-
-        # Rule 3: Good credit score and manageable debt-to-income ratio
-        if credit_score >= 680 and (income > 0 and (loan_amount / income) <= 0.5):
+        else:
             return "Low Risk"
-
-        # Default case if none of the above rules match (e.g., income is 0 or other edge cases)
-        return "Medium Risk" # A neutral default if specific rules don't apply
 
 loan_application_service = LoanApplicationService()
